@@ -1,63 +1,75 @@
 const http = require("http");
+const { GoogleGenAI } = require("@google/genai");
 
-// =====================================================
-// LIFEOS GEMINI CONFIG
-// =====================================================
+const ai = new GoogleGenAI({
+    apiKey: "AQ.Ab8RN6L6yFVkYAfwC40mGcxQKuDdlFuGCdPLYSO0cWYznFYQCw"
+});
+const server = http.createServer(async (req, res) => {
 
-// PUT YOUR AQ. GEMINI KEY HERE
-const GEMINI_API_KEY = "AQ.Ab8RN6L6yFVkYAfwC40mGcxQKuDdlFuGCdPLYSO0cWYznFYQCw";
+    // CORS
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
-// Use a currently available Gemini model
-const GEMINI_MODEL = "gemini-3.5-flash-lite";
+    // Browser preflight request
+    if (req.method === "OPTIONS") {
+        res.writeHead(204);
+        res.end();
+        return;
+    }
 
-const PORT = process.env.PORT || 3000;
+    res.setHeader("Content-Type", "application/json");
 
-// =====================================================
-// JSON RESPONSE
-// =====================================================
+    if (req.method !== "POST" || req.url !== "/ask") {
+        res.writeHead(404);
+        res.end(JSON.stringify({
+            error: "Not found"
+        }));
+        return;
+    }
 
-function sendJson(res, statusCode, data) {
-    res.writeHead(statusCode, {
-        "Content-Type": "application/json; charset=utf-8",
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type"
+    let body = "";
+
+    req.on("data", chunk => {
+        body += chunk;
     });
 
-    res.end(JSON.stringify(data));
-}
+    req.on("end", async () => {
 
-// =====================================================
-// GEMINI REQUEST
-// =====================================================
+        try {
 
-async function askGemini(message) {
+            const data = JSON.parse(body);
 
-    const url =
-        `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
+            if (!data.message) {
+                res.writeHead(400);
+                res.end(JSON.stringify({
+                    error: "Message is required"
+                }));
+                return;
+            }
 
-    const prompt = `
-You are LIFEOS, an intelligent personal life operating system.
+           const response = await ai.models.generateContent({
+    model: "gemini-3.5-flash-lite",
 
-Help the user organize and improve their life.
+    contents: `
+You are LIFEOS, an intelligent personal life planner.
 
-USER REQUEST:
+The user says:
+${data.message}
 
-${message}
+Create a practical plan based on the user's request.
 
-Create a practical plan.
-
-Return ONLY valid JSON using exactly this structure:
+Return ONLY valid JSON with this exact structure:
 
 {
   "title": "Plan title",
-  "summary": "Short useful summary",
+  "summary": "Short summary",
   "tasks": [
     {
       "title": "Task title",
       "description": "Short description",
       "priority": "HIGH",
-      "date": "2026-09-02",
+      "date": "2026-09-01",
       "time": "16:00"
     }
   ],
@@ -71,297 +83,133 @@ Return ONLY valid JSON using exactly this structure:
 }
 
 Rules:
-
 - Create 3 to 8 useful tasks.
 - Create 1 to 3 goals.
 - Priority must be HIGH, MEDIUM, or LOW.
-- Progress must be between 0 and 100.
-- Every task must have a date.
-- Every task must have a time.
-- Date format must be YYYY-MM-DD.
-- Time format must be HH:MM.
-- Do not schedule two tasks at the same time.
-- Make the schedule realistic.
+- Progress must be a number from 0 to 100.
+- Every task must have a date in YYYY-MM-DD format.
+- Every task must have a time in HH:MM 24-hour format.
+- Schedule tasks logically across the available time.
+- Never schedule two tasks at the same time.
+- Do not use Markdown.
 - Return JSON only.
-`;
+`,
 
-    const response = await fetch(url, {
-        method: "POST",
+    config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+            type: "object",
+            properties: {
+                title: {
+                    type: "string"
+                },
+                summary: {
+                    type: "string"
+                },
+               tasks: {
+    type: "array",
 
-        headers: {
-            "Content-Type": "application/json",
+    items: {
+        type: "object",
 
-            // IMPORTANT FOR GEMINI AQ KEYS
-            "x-goog-api-key": GEMINI_API_KEY
+        properties: {
+
+            title: {
+                type: "string"
+            },
+
+            description: {
+                type: "string"
+            },
+
+            priority: {
+                type: "string",
+                enum: [
+                    "HIGH",
+                    "MEDIUM",
+                    "LOW"
+                ]
+            },
+
+            date: {
+                type: "string"
+            },
+
+            time: {
+                type: "string"
+            }
+
         },
 
-        body: JSON.stringify({
-            contents: [
-                {
-                    parts: [
-                        {
-                            text: prompt
-                        }
-                    ]
+        required: [
+            "title",
+            "description",
+            "priority",
+            "date",
+            "time"
+        ]
+    }
+},
+                goals: {
+                    type: "array",
+                    items: {
+                        type: "object",
+                        properties: {
+                            title: {
+                                type: "string"
+                            },
+                            description: {
+                                type: "string"
+                            },
+                            progress: {
+                                type: "number"
+                            }
+                        },
+                        required: [
+                            "title",
+                            "description",
+                            "progress"
+                        ]
+                    }
                 }
-            ],
-
-            generationConfig: {
-                responseMimeType: "application/json"
-            }
-        })
-    });
-
-    const text = await response.text();
-
-    console.log("Gemini HTTP status:", response.status);
-
-    if (!response.ok) {
-
-        console.error("Gemini error:", text);
-
-        throw new Error(
-            `Gemini API ${response.status}: ${text}`
-        );
+            },
+            required: [
+                "title",
+                "summary",
+                "tasks",
+                "goals"
+            ]
+        }
     }
+});
 
-    let data;
+            res.writeHead(200);
 
-    try {
-        data = JSON.parse(text);
-    } catch {
-        throw new Error(
-            "Gemini returned invalid JSON."
-        );
-    }
+           const plan = JSON.parse(response.text);
 
-    const generatedText =
-        data?.candidates?.[0]?.content?.parts?.[0]?.text;
+res.end(JSON.stringify({
+    plan: plan
+}));
+        } catch (error) {
 
-    if (!generatedText) {
-        console.error(
-            "Unexpected Gemini response:",
-            JSON.stringify(data, null, 2)
-        );
+            console.error("GEMINI ERROR:", error);
 
-        throw new Error(
-            "Gemini returned no text."
-        );
-    }
+            res.writeHead(500);
 
-    return JSON.parse(generatedText);
-}
+            res.end(JSON.stringify({
+                error: error.message || "AI request failed"
+            }));
 
-// =====================================================
-// SERVER
-// =====================================================
+        }
 
-const server = http.createServer(async (req, res) => {
-
-    // -------------------------------------------------
-    // CORS
-    // -------------------------------------------------
-
-    res.setHeader(
-        "Access-Control-Allow-Origin",
-        "*"
-    );
-
-    res.setHeader(
-        "Access-Control-Allow-Methods",
-        "GET, POST, OPTIONS"
-    );
-
-    res.setHeader(
-        "Access-Control-Allow-Headers",
-        "Content-Type"
-    );
-
-    // -------------------------------------------------
-    // OPTIONS
-    // -------------------------------------------------
-
-    if (req.method === "OPTIONS") {
-
-        res.writeHead(204);
-        res.end();
-
-        return;
-    }
-
-    // -------------------------------------------------
-    // HEALTH
-    // -------------------------------------------------
-
-    if (
-        req.method === "GET" &&
-        req.url === "/health"
-    ) {
-
-        sendJson(res, 200, {
-            ok: true,
-            service: "LIFEOS AI",
-            model: GEMINI_MODEL,
-            configured:
-                GEMINI_API_KEY.length > 10
-        });
-
-        return;
-    }
-
-    // -------------------------------------------------
-    // ROOT
-    // -------------------------------------------------
-
-    if (
-        req.method === "GET" &&
-        req.url === "/"
-    ) {
-
-        sendJson(res, 200, {
-            ok: true,
-            service: "LIFEOS AI",
-            message: "LIFEOS backend is running.",
-            endpoint: "/ask"
-        });
-
-        return;
-    }
-
-    // -------------------------------------------------
-    // ASK
-    // -------------------------------------------------
-
-    if (
-        req.method === "POST" &&
-        req.url === "/ask"
-    ) {
-
-        let body = "";
-
-        req.on("data", chunk => {
-
-            body += chunk;
-
-            if (body.length > 1000000) {
-                req.destroy();
-            }
-
-        });
-
-        req.on("end", async () => {
-
-            try {
-
-                let data;
-
-                try {
-
-                    data = JSON.parse(body);
-
-                } catch {
-
-                    sendJson(res, 400, {
-                        error: "Invalid JSON request."
-                    });
-
-                    return;
-                }
-
-                const message =
-                    String(data.message || "").trim();
-
-                if (!message) {
-
-                    sendJson(res, 400, {
-                        error: "Message is required."
-                    });
-
-                    return;
-                }
-
-                console.log(
-                    "LIFEOS AI:",
-                    message
-                );
-
-                const plan =
-                    await askGemini(message);
-
-                sendJson(res, 200, {
-                    success: true,
-                    plan: plan
-                });
-
-            } catch (error) {
-
-                console.error(
-                    "LIFEOS AI ERROR:",
-                    error
-                );
-
-                sendJson(res, 500, {
-                    success: false,
-                    error:
-                        error.message ||
-                        "AI request failed."
-                });
-            }
-
-        });
-
-        return;
-    }
-
-    // -------------------------------------------------
-    // 404
-    // -------------------------------------------------
-
-    sendJson(res, 404, {
-        error: "Not found",
-        path: req.url
     });
 
 });
 
-// =====================================================
-// START
-// =====================================================
+server.listen(3000, () => {
 
-server.listen(
-    PORT,
-    "0.0.0.0",
-    () => {
+    console.log(
+        "LIFEOS AI server running at http://localhost:3000"
+    );
 
-        console.log(
-            "================================="
-        );
-
-        console.log(
-            "       LIFEOS AI SERVER"
-        );
-
-        console.log(
-            "================================="
-        );
-
-        console.log(
-            "Port:",
-            PORT
-        );
-
-        console.log(
-            "Model:",
-            GEMINI_MODEL
-        );
-
-        console.log(
-            "API configured:",
-            GEMINI_API_KEY.length > 10
-        );
-
-        console.log(
-            "================================="
-        );
-    }
-);
+});
